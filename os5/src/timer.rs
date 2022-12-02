@@ -16,3 +16,7 @@ pub fn get_time_us() -> usize {
 pub fn set_next_trigger() {
     set_timer(get_time() + CLOCK_FREQ / TICKS_PER_SEC);
 }
+
+pub fn get_time_ms() -> usize {
+    get_time_us() / 1000
+}
