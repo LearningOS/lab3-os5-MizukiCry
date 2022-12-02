@@ -3,8 +3,17 @@
 use crate::loader::get_app_data_by_name;
 use crate::mm::{translated_refmut, translated_str};
 use crate::task::{
-    add_task, current_task, current_user_token, exit_current_and_run_next,
-    suspend_current_and_run_next, TaskStatus,
+    add_task,
+    current_task,
+    current_user_token,
+    exit_current_and_run_next,
+    suspend_current_and_run_next,
+    TaskStatus,
+    task_mmap,
+    task_munmap,
+    current_task_status,
+    current_syscall_times,
+    current_run_time,
 };
 use crate::timer::get_time_us;
 use alloc::sync::Arc;
@@ -106,39 +115,57 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 }
 
 // YOUR JOB: 引入虚地址后重写 sys_get_time
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    let _us = get_time_us();
-    // unsafe {
-    //     *ts = TimeVal {
-    //         sec: us / 1_000_000,
-    //         usec: us % 1_000_000,
-    //     };
-    // }
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    let ts = translated_refmut(current_user_token(), ts);
+    let us = get_time_us();
+    *ts = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
     0
 }
 
 // YOUR JOB: 引入虚地址后重写 sys_task_info
-pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    -1
+pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
+    let ti = translated_refmut(current_user_token(), ti);
+    *ti = TaskInfo {
+        status: current_task_status(),
+        syscall_times: current_syscall_times(),
+        time: current_run_time(),
+    };
+    0
 }
 
 // YOUR JOB: 实现sys_set_priority，为任务添加优先级
-pub fn sys_set_priority(_prio: isize) -> isize {
-    -1
+pub fn sys_set_priority(prio: isize) -> isize {
+    if prio < 2 {
+        return -1;
+    }
+    current_task().unwrap().inner_exclusive_access().priority = prio as usize;
+    prio
 }
 
 // YOUR JOB: 扩展内核以实现 sys_mmap 和 sys_munmap
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    -1
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    task_mmap(start, len, port)
 }
 
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    task_munmap(start, len)
 }
 
 //
 // YOUR JOB: 实现 sys_spawn 系统调用
-// ALERT: 注意在实现 SPAWN 时不需要复制父进程地址空间，SPAWN != FORK + EXEC 
-pub fn sys_spawn(_path: *const u8) -> isize {
-    -1
+// ALERT: 注意在实现 SPAWN 时不需要复制父进程地址空间，SPAWN != FORK + EXEC
+pub fn sys_spawn(path: *const u8) -> isize {
+    let token = current_user_token();
+    let path = translated_str(token, path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let task = current_task().unwrap().spawn(data);
+        let pid = task.pid.0 as isize;
+        add_task(task);
+        pid
+    } else {
+        -1
+    }
 }
